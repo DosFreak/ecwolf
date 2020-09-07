@@ -186,6 +186,7 @@ public:
 	int				LevelBonus;
 	unsigned int	LevelNumber;
 	bool			NoIntermission;
+	FTextureID		ParallaxSky;
 
 	bool			DeathCam;
 	bool			SecretDeathSounds;

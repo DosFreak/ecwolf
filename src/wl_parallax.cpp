@@ -1,64 +1,98 @@
-#include "version.h"
-
-#ifdef USE_PARALLAX
-
+#include "c_cvars.h"
+#include "g_mapinfo.h"
+#include "id_ca.h"
 #include "wl_def.h"
+#include "wl_agent.h"
+#include "wl_play.h"
+#include "wl_main.h"
+#include "wl_draw.h"
 
-#ifdef USE_FEATUREFLAGS
+extern fixed viewz;
+extern int viewshift;
 
-// The lower left tile of every map determines the start texture of the parallax sky.
-static int GetParallaxStartTexture()
+// Fill in a span of pixels. Could be potentially have a POT version but not
+// sure if it's worthwhile.
+static void DrawParallaxPlaneLoop(byte *vbuf, unsigned vbufPitch,
+	const byte* src, int yshift, fixed h, fixed yStep, int y, int yend)
 {
-	int startTex = ffDataBottomLeft;
-	assert(startTex >= 0 && startTex < PMSpriteStart);
-	return startTex;
-}
+	vbuf += y*vbufPitch;
 
-#else
-
-static int GetParallaxStartTexture()
-{
-	int startTex;
-	switch(gamestate.episode * 10 + mapon)
+	for(fixed ty = (((y + yshift)) * yStep) % h; y < yend; vbuf += vbufPitch, ++y)
 	{
-		case  0: startTex = 20; break;
-		default: startTex =  0; break;
+		*vbuf = src[ty>>FRACBITS];
+
+		if((ty += yStep) > h)
+			ty -= h;
 	}
-	assert(startTex >= 0 && startTex < PMSpriteStart);
-	return startTex;
 }
 
-#endif
-
-void DrawParallax(byte *vbuf, unsigned vbufPitch)
+// Draws one of the two sky planes: above or below wallheight
+template<bool ceiling>
+static void DrawParallaxPlane(byte *vbuf, unsigned vbufPitch,
+	FTexture *skysource, int yshift,
+	int midangle, fixed heightFactor, int skyheight, int skyscaledheight)
 {
-	int startpage = GetParallaxStartTexture();
-	int midangle = player->angle * (FINEANGLES / ANGLES);
-	int skyheight = viewheight >> 1;
+	const int w = skysource->GetWidth();
+	const fixed h = (skysource->GetHeight())<<FRACBITS;
+	const fixed yStep = h/skyscaledheight;
+
 	int curtex = -1;
-	byte *skytex;
-
-	startpage += USE_PARALLAX - 1;
-
+	const byte *skytex = NULL;
 	for(int x = 0; x < viewwidth; x++)
 	{
 		int curang = pixelangle[x] + midangle;
 		if(curang < 0) curang += FINEANGLES;
 		else if(curang >= FINEANGLES) curang -= FINEANGLES;
-		int xtex = curang * USE_PARALLAX * TEXTURESIZE / FINEANGLES;
-		int newtex = xtex >> TEXTURESHIFT;
-		if(newtex != curtex)
+		const int xtex = (FINEANGLES - curang - 1) * w / FINEANGLES;
+		if(xtex != curtex)
 		{
-			curtex = newtex;
-			skytex = PM_GetTexture(startpage - curtex);
-		}
-		int texoffs = TEXTUREMASK - ((xtex & (TEXTURESIZE - 1)) << TEXTURESHIFT);
-		int yend = skyheight - (wallheight[x] >> 3);
-		if(yend <= 0) continue;
+			curtex = xtex;
 
-		for(int y = 0, offs = x; y < yend; y++, offs += vbufPitch)
-			vbuf[offs] = skytex[texoffs + (y * TEXTURESIZE) / skyheight];
+			skytex = skysource->GetColumn(xtex, NULL);
+		}
+
+		if(ceiling)
+		{
+			int yend = skyheight - ((wallheight[x]*heightFactor)>>FRACBITS);
+			if(yend <= 0)
+				continue;
+			if(yend >= viewheight)
+				yend = viewheight;
+
+			DrawParallaxPlaneLoop(vbuf+x, vbufPitch, skytex, yshift, h, yStep, 0, yend);
+		}
+		else
+		{
+			int ystart = skyheight + ((wallheight[x]*heightFactor)>>FRACBITS);
+			if(ystart < 0)
+				ystart = 0;
+
+			DrawParallaxPlaneLoop(vbuf+x, vbufPitch, skytex, yshift, h, yStep, ystart, viewheight);
+		}
 	}
 }
 
-#endif
+void DrawParallax(byte *vbuf, unsigned vbufPitch)
+{
+	if(!levelInfo->ParallaxSky.isValid())
+		return;
+
+	const int midangle = (players[ConsolePlayer].camera->angle)>>ANGLETOFINESHIFT;
+	const int skyheight = (viewheight >> 1) - viewshift;
+	// We want to map the sky onto the upper and lower 100 pixels of the 320x200
+	// canvas.  So we can use the psprite scale variables to determine the size.
+	const int skyscaledheight = (100*pspriteyscale)>>FRACBITS;
+
+	// Determines the offset to y when determining texel
+	int yshift = skyscaledheight - (viewheight>>1) + viewshift;
+	if(yshift < 0)
+		yshift = skyscaledheight-((-yshift)%skyscaledheight);
+
+	fixed planeheight = viewz+(map->GetPlane(0).depth<<FRACBITS);
+	const fixed heightFactor = abs(planeheight)>>8;
+
+	FTexture * const skysource = TexMan(levelInfo->ParallaxSky);
+
+	DrawParallaxPlane<true>(vbuf, vbufPitch, skysource, yshift, midangle, heightFactor, skyheight, skyscaledheight);
+	DrawParallaxPlane<false>(vbuf, vbufPitch, skysource, yshift, midangle, heightFactor, skyheight, skyscaledheight);
+}

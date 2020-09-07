@@ -295,6 +295,7 @@ LevelInfo::LevelInfo() : ResetHealth(false), ResetInventory(false),
 	SpawnWithWeaponRaised = false;
 	ForceTally = false;
 	HighScoresGraphic.SetInvalid();
+	ParallaxSky.SetInvalid();
 }
 
 FTextureID LevelInfo::GetBorderTexture() const
@@ -555,6 +556,12 @@ protected:
 		}
 		else if(key.CompareNoCase("Translator") == 0)
 			ParseStringAssignment(mapInfo.Translator);
+		else if(key.CompareNoCase("ParallaxSky") == 0)
+		{
+			FString texName;
+			ParseStringAssignment(texName);
+			mapInfo.ParallaxSky = TexMan.CheckForTexture(texName, FTexture::TEX_Wall);
+		}
 		else
 			return false;
 		return true;
